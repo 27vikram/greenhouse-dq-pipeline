@@ -73,7 +73,8 @@ CUSTOMERS = [
 ISSUES: list[dict] = []
 
 
-def plant(issue_id, source, dimension, description, affected, rule_hint):
+def plant(issue_id, source, dimension, description, affected, rule_hint, checks):
+    """checks: [(rule_id, expected_failures)] - what dq.result should show for this issue."""
     ISSUES.append({
         "issue_id": issue_id,
         "source": source,
@@ -81,6 +82,7 @@ def plant(issue_id, source, dimension, description, affected, rule_hint):
         "description": description,
         "affected": affected,
         "how_to_catch": rule_hint,
+        "checks": [{"rule_id": r, "expected_failures": n} for r, n in checks],
     })
 
 
@@ -181,27 +183,32 @@ def gen_climate(rng):
     plant("C01", "climate", "Timeliness",
           f"No climate file delivered for {missing_file_day} ({n['missing_file_rows']} hourly readings never arrive).",
           {"files": 1, "rows": n["missing_file_rows"]},
-          "Expect one file per calendar day; flag missing days.")
+          "Expect one file per calendar day; flag missing days.",
+          [("CLM-101", 1)])
     plant("C02", "climate", "Completeness",
           f"Sensor in {gap_zone} offline {gap_day} 02:00-07:00; {n['gap']} hourly readings missing.",
           {"rows": n["gap"]},
-          "Expect 24 readings per zone per day; flag zone-days with fewer.")
+          "Expect 24 readings per zone per day; flag zone-days with fewer.",
+          [("CLM-102", 1)])
     plant("C03", "climate", "Uniqueness",
           f"climate_{dup_day:%Y%m%d}.csv contains {dup_zone} twice (file re-sent and appended).",
           {"rows": n["dup"]},
-          "zone_id + reading_ts must be unique.")
+          "zone_id + reading_ts must be unique.",
+          [("CLM-003", n["dup"])])
     plant("C04", "climate", "Validity",
           f"{f_zone} temperatures reported in Fahrenheit Sep 15-17 after a sensor firmware update; header still says temp_c.",
           {"rows": n["fahrenheit"]},
-          "Range check on temp_c (ref.sensor_valid_range). RCA candidate: all failures share one zone and date window.")
+          "Range check on temp_c (ref.sensor_valid_range). RCA candidate: all failures share one zone and date window.",
+          [("CLM-004", n["fahrenheit"])])
     plant("C05", "climate", "Validity", "Two temperature spikes of 85.0 C.",
-          {"rows": n["spike"]}, "Range check on temp_c.")
+          {"rows": n["spike"]}, "Range check on temp_c.", [("CLM-004", n["spike"])])
     plant("C06", "climate", "Validity", "Five humidity readings of -999 (vendor 'no reading' sentinel).",
-          {"rows": n["sentinel"]}, "Range check on humidity_pct.")
+          {"rows": n["sentinel"]}, "Range check on humidity_pct.", [("CLM-005", n["sentinel"])])
     plant("C07", "climate", "Accuracy",
           f"{frozen_zone} CO2 sensor stuck at {frozen_value} ppm for {n['frozen']} consecutive hours. Values are in range, so range checks pass.",
           {"rows": n["frozen"]},
-          "Flatline check: same value for N+ consecutive hours (window functions).")
+          "Flatline check: same value for N+ consecutive hours (window functions).",
+          [("CLM-103", n["frozen"])])
 
 
 # ------------------------------------------------------------------ harvest (ERP)
@@ -245,10 +252,6 @@ def gen_harvest(rng):
                     "recorded_by": f"{gh.lower()}.clerk{1 if int(zone_id[1:]) % 2 else 2}",
                 })
 
-    n_plural = sum(r["crop_name"] == "Bell Peppers" for r in rows)
-    n_abbrev = sum(r["crop_name"] == "B. Pepper" for r in rows)
-    n_case = sum(r["crop_name"] == "BELL PEPPER " for r in rows)
-
     # pick rows to corrupt from a shuffled pool so no row is corrupted twice
     pool_idx = [i for i in range(len(rows)) if rows[i]["harvest_date"] != "2026-09-30"]
     rng.shuffle(pool_idx)
@@ -274,26 +277,33 @@ def gen_harvest(rng):
         rows.append(copy)
 
     rows.sort(key=lambda r: r["harvest_id"])  # stable: duplicates land next to their originals
+    # counted on the final file, so re-exported duplicates are included
+    n_plural = sum(r["crop_name"] == "Bell Peppers" for r in rows)
+    n_abbrev = sum(r["crop_name"] == "B. Pepper" for r in rows)
+    n_case = sum(r["crop_name"] == "BELL PEPPER " for r in rows)
     header = ["harvest_id", "zone_id", "crop_name", "harvest_date", "grade", "kg_harvested", "recorded_by"]
     write_csv(out / "harvest_export_20260930.csv", header, [[r[c] for c in header] for r in rows])
 
     plant("H01", "erp_harvest", "Consistency",
           "Bell Pepper spelled 'Bell Peppers' (all Z03 rows) and 'B. Pepper' (Z04 from Sep 15). These rows drop out of any join to the crop master.",
           {"rows_bell_peppers": n_plural, "rows_b_pepper": n_abbrev},
-          "crop_name must exist in ref.crop. RCA candidate: Bell Pepper shipped kg > harvested kg.")
+          "crop_name must exist in ref.crop. RCA candidate: Bell Pepper shipped kg > harvested kg.",
+          [("HRV-004", n_plural + n_abbrev), ("REC-001", 1)])
     plant("H02", "erp_harvest", "Consistency (control case, NOT an issue)",
           "Z02 rows say 'BELL PEPPER ' (upper case + trailing space). Under SQL Server's default case-insensitive collation, = ignores case and trailing spaces, so these still match.",
           {"rows": n_case},
-          "Should PASS the crop_name check. Good talking point about collation.")
-    plant("H03", "erp_harvest", "Validity", "Negative kg_harvested.", {"rows": 2}, "kg_harvested >= 0.")
-    plant("H04", "erp_harvest", "Completeness", "Blank grade.", {"rows": 5}, "grade NOT NULL and IN ('A','B','Cull').")
+          "Should PASS the crop_name check. Good talking point about collation.",
+          [("HRV-004", 0)])
+    plant("H03", "erp_harvest", "Validity", "Negative kg_harvested.", {"rows": 2}, "kg_harvested >= 0.", [("HRV-007", 2)])
+    plant("H04", "erp_harvest", "Completeness", "Blank grade.", {"rows": 5}, "grade NOT NULL and IN ('A','B','Cull').", [("HRV-006", 5)])
     plant("H05", "erp_harvest", "Validity", "harvest_date typed as 2026-10-30 instead of 2026-09-30 (future date).",
-          {"rows": 1}, "harvest_date not later than the extract date.")
+          {"rows": 1}, "harvest_date not later than the extract date.", [("HRV-005", 1)])
     plant("H06", "erp_harvest", "Consistency", "Zone Z13 does not exist in the zone master.",
-          {"rows": 3}, "zone_id must exist in ref.zone.")
+          {"rows": 3}, "zone_id must exist in ref.zone.", [("HRV-003", 3)])
     plant("H07", "erp_harvest", "Uniqueness",
           "Four harvest_ids appear twice with different kg (ERP correction re-exported without removing the original).",
-          {"harvest_ids": 4, "rows": 8}, "harvest_id must be unique; flag conflicting duplicates.")
+          {"harvest_ids": 4, "rows": 8}, "harvest_id must be unique; flag conflicting duplicates.",
+          [("HRV-002", 8)])
     return sellable
 
 
@@ -354,6 +364,7 @@ def gen_shipments(rng, sellable):
 
     # S04: missing customer
     by_day[date(2026, 9, 26)][0]["customer"] = None
+    n_no_customer_lines = len(by_day[date(2026, 9, 26)][0]["lines"])
 
     # S05: two Sep 10 shipments re-sent inside the Sep 11 file
     resent = json.loads(json.dumps(by_day[date(2026, 9, 10)][:2]))
@@ -374,17 +385,20 @@ def gen_shipments(rng, sellable):
     plant("S01", "wms_shipments", "Timeliness",
           "No shipments file for 2026-09-20. Its shipments arrive a day late inside the 2026-09-21 file (ship_date still 09-20).",
           {"files_missing": 1, "late_shipments": len(late), "late_lines": sum(len(s["lines"]) for s in late)},
-          "Expect one file per day; flag ship_date earlier than extract_date.")
+          "Expect one file per day; flag ship_date earlier than extract_date.",
+          [("SHP-101", 1), ("SHP-102", sum(len(s["lines"]) for s in late))])
     plant("S02", "wms_shipments", "Consistency",
           f"SKU {UNMASTERED_SKU[0]} (orange bell pepper) shipped from {UNMASTERED_FROM} but never added to the SKU master.",
           {"lines": n_unknown},
-          "sku must exist in ref.sku. Second RCA candidate: shipped kg drops when these lines are quarantined.")
+          "sku must exist in ref.sku. Second RCA candidate: shipped kg drops when these lines are quarantined.",
+          [("SHP-004", n_unknown)])
     plant("S03", "wms_shipments", "Validity", "Lines with cases = 0 (3) or -40 (1).",
-          {"lines": 4}, "cases > 0.")
+          {"lines": 4}, "cases > 0.", [("SHP-005", 4)])
     plant("S04", "wms_shipments", "Completeness", "A 2026-09-26 shipment has no customer.",
-          {"shipments": 1}, "customer NOT NULL.")
+          {"shipments": 1, "lines": n_no_customer_lines}, "customer NOT NULL.", [("SHP-006", n_no_customer_lines)])
     plant("S05", "wms_shipments", "Uniqueness", "Two 2026-09-10 shipments re-sent in the 2026-09-11 file.",
-          {"shipments": 2, "lines": n_resent_lines}, "shipment_id + line_no must be unique across files.")
+          {"shipments": 2, "lines": n_resent_lines}, "shipment_id + line_no must be unique across files. The re-sent lines are also late (ship_date before extract_date).",
+          [("SHP-003", n_resent_lines), ("SHP-102", n_resent_lines)])
 
 
 def main():

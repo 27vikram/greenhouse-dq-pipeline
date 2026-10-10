@@ -79,6 +79,7 @@ CREATE TABLE ops.file_load (
     status         VARCHAR(20)    NOT NULL CONSTRAINT DF_file_status DEFAULT 'loading',
     message        NVARCHAR(4000) NULL,
     loaded_at      DATETIME2(0)   NOT NULL CONSTRAINT DF_file_loaded DEFAULT SYSUTCDATETIME(),
+    processed_run_id INT          NULL,             -- run that pushed this file through DQ into dw (NULL = pending)
     CONSTRAINT CK_file_status CHECK (status IN ('loading','loaded','row_mismatch','rejected','failed'))
 );
 -- the same file content can only be loaded successfully once -> reruns are idempotent
@@ -138,6 +139,7 @@ CREATE TABLE dq.check_rule (
     rule_name     NVARCHAR(200)  NOT NULL,
     source_system VARCHAR(30)    NOT NULL,
     target_table  NVARCHAR(128)  NOT NULL,
+    check_level   VARCHAR(10)    NOT NULL,       -- Row: tested per staging row. Set: tested across a whole table or day.
     dq_dimension  VARCHAR(20)    NOT NULL,
     severity      VARCHAR(10)    NOT NULL,
     on_fail       VARCHAR(12)    NOT NULL,       -- Quarantine: row is kept out of dw. Warn: row loads, issue is logged.
@@ -145,7 +147,9 @@ CREATE TABLE dq.check_rule (
     is_active     BIT            NOT NULL CONSTRAINT DF_dq_rule_active DEFAULT 1,
     CONSTRAINT CK_dq_rule_dimension CHECK (dq_dimension IN ('Completeness','Validity','Uniqueness','Consistency','Timeliness','Accuracy')),
     CONSTRAINT CK_dq_rule_severity  CHECK (severity IN ('Critical','High','Medium','Low')),
-    CONSTRAINT CK_dq_rule_on_fail    CHECK (on_fail IN ('Quarantine','Warn'))
+    CONSTRAINT CK_dq_rule_on_fail    CHECK (on_fail IN ('Quarantine','Warn')),
+    CONSTRAINT CK_dq_rule_level      CHECK (check_level IN ('Row','Set')),
+    CONSTRAINT CK_dq_rule_set_warns  CHECK (check_level = 'Row' OR on_fail = 'Warn')   -- set checks have no single row to quarantine
 );
 
 CREATE TABLE dq.result (

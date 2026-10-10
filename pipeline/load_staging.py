@@ -157,6 +157,16 @@ def load_all(conn, run_id: int) -> dict:
     return summary
 
 
+def file_problems(summary: dict) -> bool:
+    return any(c["rejected"] or c["row_mismatch"] for c in summary.values())
+
+
+def print_load_summary(summary: dict) -> None:
+    print(f"{'source':<15}{'loaded':>8}{'skipped':>9}{'rejected':>10}{'mismatch':>10}{'rows':>9}")
+    for system, c in summary.items():
+        print(f"{system:<15}{c['loaded']:>8}{c['skipped']:>9}{c['rejected']:>10}{c['row_mismatch']:>10}{c['rows']:>9}")
+
+
 def main() -> None:
     conn = connect()
     run_id = start_run(conn, "load_staging")
@@ -165,13 +175,10 @@ def main() -> None:
     except Exception as e:
         finish_run(conn, run_id, "failed", str(e)[:4000])
         raise
-    problems = any(c["rejected"] or c["row_mismatch"] for c in summary.values())
-    finish_run(conn, run_id, "succeeded_with_warnings" if problems else "succeeded")
+    finish_run(conn, run_id, "succeeded_with_warnings" if file_problems(summary) else "succeeded")
 
-    print(f"\nRun {run_id}")
-    print(f"{'source':<15}{'loaded':>8}{'skipped':>9}{'rejected':>10}{'mismatch':>10}{'rows':>9}")
-    for system, c in summary.items():
-        print(f"{system:<15}{c['loaded']:>8}{c['skipped']:>9}{c['rejected']:>10}{c['row_mismatch']:>10}{c['rows']:>9}")
+    print(f"\nRun {run_id}: files -> staging")
+    print_load_summary(summary)
     conn.close()
 
 

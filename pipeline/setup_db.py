@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import csv
 
-from db import DATA_DIR, DATABASE, SQL_DIR, connect, run_sql_file
+from db import DATA_DIR, DATABASE, ROOT, SQL_DIR, connect, run_sql_file
 
-SQL_FILES = ["01_schemas.sql", "02_tables.sql", "03_seed_config.sql"]
+ALIAS_FILE = ROOT / "config" / "crop_aliases.csv"   # hand-maintained crop spelling map (the RCA fix)
+
+SQL_FILES = ["01_schemas.sql", "02_tables.sql", "03_seed_config.sql", "04_dq_rules.sql", "05_dq_engine.sql"]
 
 
 def create_database() -> None:
@@ -42,7 +44,14 @@ def load_reference(conn) -> None:
                     [(r["zone_id"], r["greenhouse"], r["crop_name"], int(r["area_m2"])) for r in zones])
     cur.executemany("INSERT INTO ref.sku (sku, description, crop_name, case_kg) VALUES (?, ?, ?, ?)",
                     [(r["sku"], r["description"], r["crop_name"], float(r["case_kg"])) for r in skus])
-    print(f"Loaded reference data: {len(crops)} crops, {len(zones)} zones, {len(skus)} SKUs")
+    aliases = []
+    if ALIAS_FILE.exists():
+        with ALIAS_FILE.open(newline="", encoding="utf-8") as f:
+            aliases = [r for r in csv.DictReader(f) if (r.get("alias") or "").strip()]
+    if aliases:
+        cur.executemany("INSERT INTO ref.crop_alias (alias, crop_name, reason) VALUES (?, ?, ?)",
+                        [(r["alias"], r["crop_name"].strip(), r.get("reason")) for r in aliases])
+    print(f"Loaded reference data: {len(crops)} crops, {len(zones)} zones, {len(skus)} SKUs, {len(aliases)} crop aliases")
 
 
 def main() -> None:

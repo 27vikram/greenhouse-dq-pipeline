@@ -17,7 +17,7 @@ controls catch every one of them.
  climate/*.csv     ─┐         ops.file_load      file audit: hash, row counts, status
  erp/*.csv         ─┼─ load ─▶ stg.*             raw landing, all text
  shipments/*.json  ─┘            │
-                                 ▼ DQ rules (dq.rule)  ──▶ dq.result     metrics per run
+                                 ▼ DQ rules (dq.check_rule)──▶ dq.result     metrics per run
                                  │                     ──▶ err.quarantine bad rows as JSON
                                  ▼
                               dw.dim_* / dw.fact_*  star schema  ──▶ Power BI
@@ -39,7 +39,28 @@ controls catch every one of them.
 - Schema check: a file missing an expected column is rejected whole
 - Row-count reconciliation: rows in file must equal rows landed
 
-**Staging → warehouse**: DQ rule catalogue *(next step)*
+**Staging → warehouse** (`sql/05_dq_engine.sql`, rules in `sql/04_dq_rules.sql`)
+
+27 rules live in `dq.check_rule` as data: dimension, severity, and what happens on failure.
+A rule can be switched off with `is_active = 0`, no code change.
+
+| Prefix | Source | Examples |
+|---|---|---|
+| `CLM` | Climate sensors | zone exists, one reading per hour, values in range, 24 readings per zone-day, flatlined sensor |
+| `HRV` | ERP harvest | unique harvest ID, crop name in master, no future dates, grade valid, kg ≥ 0 |
+| `SHP` | WMS shipments | unique line, SKU in master, cases > 0, customer present, missing or late files |
+| `REC` | Cross-system | shipped kg per crop must not exceed sellable harvest by more than 20% |
+
+- **Row rules** (`-0xx`) test every staging row. `Quarantine` rules keep the row out of the warehouse
+  and copy it, as JSON, to `err.quarantine` with the rule that caught it. `Warn` rules let it load.
+- **Set rules** (`-1xx`, `REC`) test a whole day, file set or table: missing files, incomplete days,
+  stuck sensors (gaps-and-islands on CO₂), and harvest-vs-shipment reconciliation.
+- Every rule writes rows checked / rows failed / failure rate to `dq.result` on every run.
+- The whole DQ + load step runs in one transaction (`ops.usp_process_pending`): it either fully lands or not at all.
+- Incremental: only files not yet processed are picked up.
+
+**Proof the controls work**: `make verify` compares each rule's result with the generator's answer key.
+Every planted issue must be caught with the exact expected row count, and every other rule must report zero.
 
 ## Running it
 
@@ -50,7 +71,7 @@ Mac, Windows and Linux.
 ```bash
 cp .env.example .env     # then change the password
 make build               # build the Python image (first time only)
-make all                 # generate data -> build database -> load staging
+make all                 # generate data -> build database -> run pipeline -> verify
 ```
 
 | Command | What it does |
@@ -58,11 +79,17 @@ make all                 # generate data -> build database -> load staging
 | `make up` | Start SQL Server and wait until it is healthy |
 | `make generate` | Create the synthetic source files in `data/` |
 | `make setup` | Rebuild the database (drops and recreates tables) |
-| `make load` | Land source files in `stg.*` |
+| `make load` | Land source files in `stg.*` only |
+| `make run` | Full pipeline: files → staging → DQ rules → warehouse + quarantine |
+| `make verify` | Compare DQ results with the planted-issues answer key |
 | `make sql` | Open a SQL prompt on GreenhouseDW |
 | `make down` / `make reset` | Stop SQL Server / delete it and its data |
 
-Run `make load` a second time: every file shows as `skipped`. That is the idempotency control working.
+Run `make run` a second time: every file shows as `skipped` and nothing is double-loaded.
+That is the idempotency control working.
+
+Useful views: `dq.vw_rule_results`, `dq.vw_latest_rule_status`, `dq.vw_crop_reconciliation`,
+`err.vw_quarantine_summary`.
 
 Apple Silicon Macs: in Docker Desktop, turn on "Use Rosetta for x86_64/amd64 emulation" so the SQL Server image runs.
 
@@ -90,9 +117,14 @@ generator/generate_data.py   synthetic data + planted issues
 pipeline/db.py               connection + SQL file runner
 pipeline/setup_db.py         build the database
 pipeline/load_staging.py     file → staging loader with controls
+pipeline/run_pipeline.py     full run: load → DQ → warehouse, with a summary
+pipeline/verify_planted.py   checks DQ results against the answer key
+config/crop_aliases.csv      maintained crop-name spellings (master data fix)
 sql/01_schemas.sql           schemas
 sql/02_tables.sql            all tables
 sql/03_seed_config.sql       sensor ranges + date dimension
+sql/04_dq_rules.sql          the 27-rule catalogue
+sql/05_dq_engine.sql         DQ engine, warehouse load, views
 ```
 
 ## Progress
@@ -100,8 +132,9 @@ sql/03_seed_config.sql       sensor ranges + date dimension
 - [x] Data generator with planted issues
 - [x] Database schema (ref / stg / dq / err / dw / ops)
 - [x] Staging loader with file-level controls
-- [ ] DQ rule catalogue + quarantine
-- [ ] Staging → warehouse transforms
+- [x] DQ rule catalogue + quarantine
+- [x] Staging → warehouse transforms
+- [x] Answer-key verification
 - [ ] Root cause analysis write-up
 - [ ] Indexing and tuning (before/after)
 - [ ] Backup and restore test
