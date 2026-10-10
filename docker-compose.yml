@@ -20,12 +20,31 @@ services:
   # Runs the Python pipeline. Used with: docker compose run --rm app python <script>
   app:
     build: .
+    image: greenhouse-dq-pipeline
     profiles: ["tools"]            # not started by "docker compose up"; only when run explicitly
     env_file: .env
     environment:
       SQL_SERVER: "sqlserver,1433" # reach SQL Server by its service name on the Docker network
     volumes:
       - .:/app
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
+  # Data health dashboard on http://localhost:8501. Started with: make dashboard
+  dashboard:
+    build: .
+    image: greenhouse-dq-pipeline
+    profiles: ["tools"]
+    env_file: .env
+    environment:
+      SQL_SERVER: "sqlserver,1433"
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "dashboard/app.py", "--server.address=0.0.0.0",
+              "--server.port=8501", "--server.headless=true", "--browser.gatherUsageStats=false"]
     depends_on:
       sqlserver:
         condition: service_healthy

@@ -1,2 +1,6 @@
 pyodbc>=5.1
 python-dotenv>=1.0
+# dashboard (pinned so the API used in dashboard/app.py stays stable)
+streamlit==1.45.1
+altair>=5.4,<6
+pandas>=2.2,<3

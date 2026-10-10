@@ -73,8 +73,9 @@ CUSTOMERS = [
 ISSUES: list[dict] = []
 
 
-def plant(issue_id, source, dimension, description, affected, rule_hint, checks):
-    """checks: [(rule_id, expected_failures)] - what dq.result should show for this issue."""
+def plant(issue_id, source, dimension, description, affected, rule_hint, checks, fixed_by=None):
+    """checks: [(rule_id, expected_failures)] - what dq.result should show for this issue.
+    fixed_by: master-data change that resolves the issue (then its rules should pass)."""
     ISSUES.append({
         "issue_id": issue_id,
         "source": source,
@@ -83,6 +84,7 @@ def plant(issue_id, source, dimension, description, affected, rule_hint, checks)
         "affected": affected,
         "how_to_catch": rule_hint,
         "checks": [{"rule_id": r, "expected_failures": n} for r, n in checks],
+        **({"fixed_by": fixed_by} if fixed_by else {}),
     })
 
 
@@ -288,7 +290,8 @@ def gen_harvest(rng):
           "Bell Pepper spelled 'Bell Peppers' (all Z03 rows) and 'B. Pepper' (Z04 from Sep 15). These rows drop out of any join to the crop master.",
           {"rows_bell_peppers": n_plural, "rows_b_pepper": n_abbrev},
           "crop_name must exist in ref.crop. RCA candidate: Bell Pepper shipped kg > harvested kg.",
-          [("HRV-004", n_plural + n_abbrev), ("REC-001", 1)])
+          [("HRV-004", n_plural + n_abbrev), ("REC-001", 1)],
+          fixed_by={"crop_aliases": ["Bell Peppers", "B. Pepper"]})
     plant("H02", "erp_harvest", "Consistency (control case, NOT an issue)",
           "Z02 rows say 'BELL PEPPER ' (upper case + trailing space). Under SQL Server's default case-insensitive collation, = ignores case and trailing spaces, so these still match.",
           {"rows": n_case},

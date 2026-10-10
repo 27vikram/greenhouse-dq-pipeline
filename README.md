@@ -3,7 +3,7 @@
 A SQL Server data pipeline for greenhouse operations data. It loads three source systems
 (climate sensors, ERP harvest records, warehouse shipments), runs data quality controls
 from source to target, quarantines bad rows for triage, and reports data quality and
-pipeline health in Power BI.
+pipeline health on a dashboard.
 
 The source data is synthetic and contains **19 deliberately planted data quality issues**
 (see `data/planted_issues.json` after generating). The answer key lets you prove the
@@ -20,7 +20,7 @@ controls catch every one of them.
                                  ▼ DQ rules (dq.check_rule)──▶ dq.result     metrics per run
                                  │                     ──▶ err.quarantine bad rows as JSON
                                  ▼
-                              dw.dim_* / dw.fact_*  star schema  ──▶ Power BI
+                              dw.dim_* / dw.fact_*  star schema  ──▶ dashboard (Streamlit)
 ```
 
 | Schema | Purpose |
@@ -61,6 +61,25 @@ A rule can be switched off with `is_active = 0`, no code change.
 
 **Proof the controls work**: `make verify` compares each rule's result with the generator's answer key.
 Every planted issue must be caught with the exact expected row count, and every other rule must report zero.
+Issues resolved by a master-data fix (H01, after RCA-001) are expected to pass instead, and are reported as resolved.
+
+## Dashboard
+
+`make dashboard`, then open http://localhost:8501. Five tabs, all read live from the database:
+
+| Tab | Answers |
+|---|---|
+| **Data quality** | Which rules fail, by how much, per source; full rule scorecard; failing rules per run |
+| **Files & runs** | Daily file arrival grid (missing days in red), file-level row reconciliation, run history |
+| **Reconciliation** | Shipped vs sellable harvest per crop against the 20% tolerance (REC-001) |
+| **Quarantine** | Rows held per rule, drill-down into the raw rows, CSV export for triage |
+| **Operations** | Sellable yield per m² by zone: a zone far below its peers points to missing data |
+
+Built with Streamlit + Altair because Power BI Desktop is Windows-only. Every query sits in
+`dashboard/queries.py` against the `dq`/`err` views, so the same model plugs into Power BI
+(SQL Server connector) unchanged.
+
+<!-- Add a screenshot: docs/dashboard.png -->
 
 ## Root cause analysis
 
@@ -68,6 +87,9 @@ The first full run failed the reconciliation control: Bell Pepper shipped 42% mo
 Two clerks had entered the crop with non-standard spellings, so 36 harvest records (33,469 kg) were
 quarantined and missing from reporting. The fix maps spellings in master data (`config/crop_aliases.csv`).
 Full write-up: [RCA-001](docs/RCA-001-bell-pepper-reconciliation.md).
+
+To replay the incident, delete the two alias rows from `config/crop_aliases.csv` and run `make all`:
+REC-001 fails again and Bell Pepper shows 1.42× on the dashboard. Restore the rows and rerun to see the fix.
 
 ## Running it
 
@@ -89,6 +111,8 @@ make all                 # generate data -> build database -> run pipeline -> ve
 | `make load` | Land source files in `stg.*` only |
 | `make run` | Full pipeline: files → staging → DQ rules → warehouse + quarantine |
 | `make verify` | Compare DQ results with the planted-issues answer key |
+| `make dashboard` | Start the dashboard on http://localhost:8501 |
+| `make test` | Render the dashboard with sample data (no database needed) |
 | `make sql` | Open a SQL prompt on GreenhouseDW |
 | `make down` / `make reset` | Stop SQL Server / delete it and its data |
 
@@ -127,6 +151,9 @@ pipeline/load_staging.py     file → staging loader with controls
 pipeline/run_pipeline.py     full run: load → DQ → warehouse, with a summary
 pipeline/verify_planted.py   checks DQ results against the answer key
 config/crop_aliases.csv      maintained crop-name spellings (master data fix)
+dashboard/app.py             data health dashboard (Streamlit + Altair)
+dashboard/queries.py         every query the dashboard runs
+tests/smoke_dashboard.py     renders the dashboard with sample data
 docs/                        RCA write-up and documentation
 sql/01_schemas.sql           schemas
 sql/02_tables.sql            all tables
@@ -147,4 +174,4 @@ sql/05_dq_engine.sql         DQ engine, warehouse load, views
 - [ ] Indexing and tuning (before/after)
 - [ ] Backup and restore test
 - [ ] Source-to-Target Mapping, data dictionary (AI-assisted), runbook
-- [ ] Power BI dashboard
+- [x] Data health dashboard

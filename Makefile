@@ -1,7 +1,7 @@
 # Shortcuts. Everything runs in Docker; the host only needs Docker Desktop.
 RUN = docker compose run --rm app python
 
-.PHONY: up build generate setup load run verify all sql down reset
+.PHONY: up build generate setup load run verify all dashboard dashboard-stop test sql down reset
 
 up:            ## start SQL Server and wait until it is healthy
 	docker compose up -d --wait sqlserver
@@ -26,11 +26,21 @@ verify: up     ## compare DQ results with the planted-issues answer key
 
 all: generate setup run verify
 
+dashboard: up  ## start the data health dashboard on http://localhost:8501
+	docker compose up -d dashboard
+	@echo "Dashboard running: open http://localhost:8501"
+
+dashboard-stop:  ## stop the dashboard
+	docker compose stop dashboard
+
+test:          ## render the dashboard with sample data (no database needed)
+	docker compose run --rm --no-deps app python tests/smoke_dashboard.py
+
 sql: up        ## open a SQL prompt on GreenhouseDW (type a query, then GO; type exit to leave)
 	docker exec -it greenhouse-sql bash -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -d GreenhouseDW'
 
-down:          ## stop SQL Server (data is kept)
-	docker compose stop
+down:          ## stop SQL Server and the dashboard (data is kept)
+	docker compose --profile tools stop
 
 reset:         ## delete the container AND its data
 	docker compose down -v
