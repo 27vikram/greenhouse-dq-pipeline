@@ -79,7 +79,7 @@ Built with Streamlit + Altair because Power BI Desktop is Windows-only. Every qu
 `dashboard/queries.py` against the `dq`/`err` views, so the same model plugs into Power BI
 (SQL Server connector) unchanged.
 
-<!-- Add a screenshot: docs/dashboard.png -->
+![Dashboard](docs/dashboard.png)
 
 ## Root cause analysis
 
