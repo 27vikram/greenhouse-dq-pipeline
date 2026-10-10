@@ -62,6 +62,13 @@ A rule can be switched off with `is_active = 0`, no code change.
 **Proof the controls work**: `make verify` compares each rule's result with the generator's answer key.
 Every planted issue must be caught with the exact expected row count, and every other rule must report zero.
 
+## Root cause analysis
+
+The first full run failed the reconciliation control: Bell Pepper shipped 42% more than was harvested.
+Two clerks had entered the crop with non-standard spellings, so 36 harvest records (33,469 kg) were
+quarantined and missing from reporting. The fix maps spellings in master data (`config/crop_aliases.csv`).
+Full write-up: [RCA-001](docs/RCA-001-bell-pepper-reconciliation.md).
+
 ## Running it
 
 The only prerequisite is **Docker Desktop**. SQL Server and the Python pipeline
@@ -120,6 +127,7 @@ pipeline/load_staging.py     file → staging loader with controls
 pipeline/run_pipeline.py     full run: load → DQ → warehouse, with a summary
 pipeline/verify_planted.py   checks DQ results against the answer key
 config/crop_aliases.csv      maintained crop-name spellings (master data fix)
+docs/                        RCA write-up and documentation
 sql/01_schemas.sql           schemas
 sql/02_tables.sql            all tables
 sql/03_seed_config.sql       sensor ranges + date dimension
@@ -135,7 +143,7 @@ sql/05_dq_engine.sql         DQ engine, warehouse load, views
 - [x] DQ rule catalogue + quarantine
 - [x] Staging → warehouse transforms
 - [x] Answer-key verification
-- [ ] Root cause analysis write-up
+- [x] Root cause analysis write-up
 - [ ] Indexing and tuning (before/after)
 - [ ] Backup and restore test
 - [ ] Source-to-Target Mapping, data dictionary (AI-assisted), runbook
